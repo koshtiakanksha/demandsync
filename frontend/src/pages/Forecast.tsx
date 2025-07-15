@@ -1,85 +1,156 @@
-// frontend/src/pages/Forecast.tsx
+// src/pages/Forecast.tsx
 
-import React, { useEffect, useState } from "react";
-import Plot from "react-plotly.js";
+import React, { useState } from 'react';
+import Plot from 'react-plotly.js';
+import Papa from 'papaparse';
+import axios from 'axios';
 
-interface ForecastDataPoint {
+interface SalesRecord {
   ds: string;
-  yhat: number;
-  yhat_lower: number;
-  yhat_upper: number;
+  y: number;
 }
 
-export default function Forecast() {
-  const [data, setData] = useState<ForecastDataPoint[]>([]);
-  const [loading, setLoading] = useState(true);
+const Forecast: React.FC = () => {
+  const [salesData, setSalesData] = useState<SalesRecord[]>([]);
+  const [skuId, setSkuId] = useState<number>(1);
+  const [period, setPeriod] = useState<number>(7);
+  const [forecast, setForecast] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    async function fetchForecast() {
-      try {
-        const response = await fetch("http://localhost:8000/forecast/sku", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sku_id: 1,
-            period: 3,
-            sales_data: [
-              { ds: "2025-07-01", y: 100 },
-              { ds: "2025-07-02", y: 130 },
-              { ds: "2025-07-03", y: 160 }
-            ]
-          })
-        });
+  const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-        if (!response.ok) throw new Error("Request failed");
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (result) => {
+        const parsedData: SalesRecord[] = result.data.map((row: any) => ({
+          ds: row.ds,
+          y: parseFloat(row.y),
+        }));
+        setSalesData(parsedData);
+      },
+    });
+  };
 
-        const result = await response.json();
-        console.log("Forecast API response:", result);  // <--- add this line
-        setData(result);
-      } catch (err) {
-        console.error("Error fetching forecast:", err);
-      } finally {
-        setLoading(false);
-      }
+  const handleManualAdd = () => {
+    setSalesData([...salesData, { ds: '', y: 0 }]);
+  };
+
+  const updateRow = (index: number, field: keyof SalesRecord, value: string | number) => {
+    const updated = [...salesData];
+    updated[index] = { ...updated[index], [field]: value };
+    setSalesData(updated);
+  };
+
+  const fetchForecast = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await axios.post('http://localhost:8000/api/forecast/sku', {
+        sku_id: skuId,
+        sales_data: salesData,
+        period: period,
+      });
+      setForecast(res.data);
+    } catch (err: any) {
+      setError('Forecast failed: ' + err.message);
+      setForecast([]);
+    } finally {
+      setLoading(false);
     }
-
-    fetchForecast();
-  }, []);
-
-  if (loading) return <div>Loading forecast...</div>;
-  if (!data || data.length === 0) return <div>No forecast data</div>;
+  };
 
   return (
-    <div>
-      <h2>Forecast Chart</h2>
-      <Plot
-        data={[
-          {
-            x: data.map(d => d.ds),
-            y: data.map(d => d.yhat),
-            type: "scatter",
-            mode: "lines+markers",
-            name: "Forecast"
-          },
-          {
-            x: data.map(d => d.ds),
-            y: data.map(d => d.yhat_lower),
-            type: "scatter",
-            mode: "lines",
-            name: "Lower Bound",
-            line: { dash: "dot", color: "red" }
-          },
-          {
-            x: data.map(d => d.ds),
-            y: data.map(d => d.yhat_upper),
-            type: "scatter",
-            mode: "lines",
-            name: "Upper Bound",
-            line: { dash: "dot", color: "green" }
-          }
-        ]}
-        layout={{ title: "Demand Forecast", xaxis: { title: "Date" }, yaxis: { title: "Units" } }}
-      />
+    <div style={{ padding: '20px' }}>
+      <h2>Demand Forecast</h2>
+
+      <div style={{ marginBottom: '10px' }}>
+        <label>SKU ID: </label>
+        <input type="number" value={skuId} onChange={(e) => setSkuId(parseInt(e.target.value))} />
+        <label style={{ marginLeft: '10px' }}>Forecast Period (days): </label>
+        <input type="number" value={period} onChange={(e) => setPeriod(parseInt(e.target.value))} />
+      </div>
+
+      <div>
+        <label>Upload CSV (columns: ds, y): </label>
+        <input type="file" accept=".csv" onChange={handleCSVUpload} />
+      </div>
+
+      <button onClick={handleManualAdd} style={{ marginTop: '10px' }}>Add Row Manually</button>
+
+      {salesData.length > 0 && (
+        <table style={{ marginTop: '10px', borderCollapse: 'collapse', width: '100%' }}>
+          <thead>
+            <tr>
+              <th>Date (ds)</th>
+              <th>Sales (y)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {salesData.map((row, i) => (
+              <tr key={i}>
+                <td>
+                  <input
+                    type="date"
+                    value={row.ds}
+                    onChange={(e) => updateRow(i, 'ds', e.target.value)}
+                  />
+                </td>
+                <td>
+                  <input
+                    type="number"
+                    value={row.y}
+                    onChange={(e) => updateRow(i, 'y', parseFloat(e.target.value))}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <button onClick={fetchForecast} style={{ marginTop: '10px' }}>
+        Run Forecast
+      </button>
+
+      {loading && <p>Loading forecast...</p>}
+      {error && <p style={{ color: 'red' }}>{error}</p>}
+
+      {forecast.length > 0 && (
+        <Plot
+          data={[
+            {
+              x: forecast.map((f) => f.ds),
+              y: forecast.map((f) => f.yhat),
+              type: 'scatter',
+              mode: 'lines+markers',
+              name: 'Forecast',
+            },
+            {
+              x: forecast.map((f) => f.ds),
+              y: forecast.map((f) => f.yhat_upper),
+              type: 'scatter',
+              mode: 'lines',
+              name: 'Upper Bound',
+              line: { dash: 'dot' },
+            },
+            {
+              x: forecast.map((f) => f.ds),
+              y: forecast.map((f) => f.yhat_lower),
+              type: 'scatter',
+              mode: 'lines',
+              name: 'Lower Bound',
+              line: { dash: 'dot' },
+            },
+          ]}
+          layout={{ title: 'SKU Forecast', xaxis: { title: 'Date' }, yaxis: { title: 'Sales' } }}
+        />
+      )}
     </div>
   );
-}
+};
+
+export default Forecast;
