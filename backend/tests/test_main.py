@@ -47,7 +47,9 @@ class DummyProphet:
 @pytest.fixture(autouse=True)
 def patch_prophet(monkeypatch):
     from app.api import forecast as forecast_module
+    from app.services import forecasting as service_module
     monkeypatch.setattr(forecast_module, "Prophet", DummyProphet)
+    monkeypatch.setattr(service_module, "Prophet", DummyProphet)
     yield
 
 
@@ -71,6 +73,24 @@ def test_forecast_sku():
     data = res.json()
     assert len(data) == 2
     assert {"ds", "yhat", "yhat_lower", "yhat_upper"} <= set(data[0].keys())
+
+
+def test_inventory_optimize():
+    client.put("/inventory/1", json={"stock_level": 5})
+    payload = {
+        "sku_id": 1,
+        "sales_data": [
+            {"ds": "2021-01-01", "y": 10},
+            {"ds": "2021-01-02", "y": 12},
+        ],
+        "period": 2,
+    }
+    res = client.post("/inventory/optimize", json=payload)
+    assert res.status_code == 200
+    data = res.json()
+    assert "reorder_qty" in data
+    assert "stockout_warning" in data
+    assert "overstock_alert" in data
 
 
 def test_auth_signup_and_login():
